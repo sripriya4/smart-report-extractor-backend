@@ -1,9 +1,13 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, BadRequestException } from '@nestjs/common';
 import * as pdfParse from 'pdf-parse';
-import type { Multer } from 'multer';
 import { InvoiceExtractor } from '../../extractors/invoice.extractor';
 import { BankExtractor } from '../../extractors/bank.extractor';
 import { SummaryService } from '../../summary/summary.service';
+
+interface UploadedFile {
+  mimetype: string;
+  buffer: Buffer;
+}
 
 @Injectable()
 export class UploadService {
@@ -14,7 +18,7 @@ export class UploadService {
 
   constructor(private readonly summaryService: SummaryService) {}
 
-  async processFile(file: Multer.File) {
+  async processFile(file: UploadedFile) {
     try {
       // Parse PDF and extract text
       const pdfParseLib = (pdfParse as any).default || pdfParse;
@@ -34,21 +38,20 @@ export class UploadService {
       for (const extractor of this.extractors) {
         if (extractor.canHandle(text)) {
           const extractedData = extractor.extract(text);
-
-          // Generate summary using LLM
-          const summary = await this.summaryService.summarize(text);
+          // Skip LLM for recognized types — structured fields already capture the key data
+          const summary = this.buildStructuredSummary(extractedData);
 
           return {
             success: true,
             type: extractedData.type,
             data: extractedData,
             summary,
-            rawText: text.substring(0, 500), // First 500 chars for reference
+            rawText: text.substring(0, 500),
           };
         }
       }
 
-      // No extractor matched - return generic document with text
+      // No extractor matched — use LLM only for unrecognized documents
       const summary = await this.summaryService.summarize(text);
       return {
         success: true,
@@ -59,9 +62,33 @@ export class UploadService {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new InternalServerErrorException(
-        `Error processing PDF: ${errorMessage}`,
-      );
+      const isPdfFormatError = /bad xref|invalid pdf|bad pdf|unexpected token|cannot read/i.test(errorMessage);
+      if (isPdfFormatError) {
+        throw new BadRequestException(
+          'Could not parse this PDF. The file may be corrupted, password-protected, or in an unsupported format. Try re-saving it as a standard PDF.',
+        );
+      }
+      throw new InternalServerErrorException(`Error processing PDF: ${errorMessage}`);
     }
+  }
+
+  private buildStructuredSummary(data: any): string {
+    if (data.type === 'invoice') {
+      const parts = ['Invoice document.'];
+      if (data.invoiceNumber) parts.push(`Invoice number: ${data.invoiceNumber}.`);
+      if (data.seller) parts.push(`Seller: ${data.seller}.`);
+      if (data.total) parts.push(`Total: ${data.total}.`);
+      if (data.date) parts.push(`Date: ${data.date}.`);
+      if (data.orderNumber) parts.push(`Order: ${data.orderNumber}.`);
+      return parts.join(' ');
+    }
+    if (data.type === 'bank_statement') {
+      const parts = ['Bank statement.'];
+      if (data.bankName) parts.push(`Bank: ${data.bankName}.`);
+      if (data.accountNumber) parts.push(`Account: ${data.accountNumber}.`);
+      if (data.balance) parts.push(`Balance: $${data.balance}.`);
+      return parts.join(' ');
+    }
+    return 'Structured document processed successfully.';
   }
 }

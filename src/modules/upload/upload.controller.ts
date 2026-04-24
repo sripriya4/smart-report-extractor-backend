@@ -7,15 +7,19 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadService } from './upload.service';
-import type { Multer } from 'multer';
+
+interface UploadedFile {
+  mimetype: string;
+  buffer: Buffer;
+}
 
 @Controller('upload')
 export class UploadController {
   constructor(private readonly uploadService: UploadService) {}
 
   @Post()
-  @UseInterceptors(FileInterceptor('file'))
-  async uploadFile(@UploadedFile() file: Multer.File | undefined) {
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  async uploadFile(@UploadedFile() file: UploadedFile | undefined) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }

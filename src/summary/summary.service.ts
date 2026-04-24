@@ -3,22 +3,21 @@ import axios from 'axios';
 
 @Injectable()
 export class SummaryService {
-  private readonly openaiApiKey = process.env.OPENAI_API_KEY;
-  private readonly openaiBaseUrl = 'https://api.openai.com/v1/chat/completions';
+  private readonly groqApiKey = process.env.GROQ_API_KEY;
+  private readonly groqBaseUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
   async summarize(text: string): Promise<string> {
     try {
-      if (!this.openaiApiKey) {
-        return 'Summary service not configured (OPENAI_API_KEY not set)';
+      if (!this.groqApiKey) {
+        return 'Summary service not configured (GROQ_API_KEY not set)';
       }
 
-      // Limit text to avoid token limits
       const truncatedText = text.substring(0, 3000);
 
       const response = await axios.post(
-        this.openaiBaseUrl,
+        this.groqBaseUrl,
         {
-          model: 'gpt-3.5-turbo',
+          model: 'llama-3.1-8b-instant',
           messages: [
             {
               role: 'system',
@@ -35,7 +34,7 @@ export class SummaryService {
         },
         {
           headers: {
-            Authorization: `Bearer ${this.openaiApiKey}`,
+            Authorization: `Bearer ${this.groqApiKey}`,
             'Content-Type': 'application/json',
           },
         },
@@ -46,7 +45,7 @@ export class SummaryService {
       if (error instanceof Object && 'response' in error) {
         const err = error as any;
         throw new HttpException(
-          `OpenAI API Error: ${err.response?.data?.error?.message || 'Unknown error'}`,
+          `Groq API Error: ${err.response?.data?.error?.message || 'Unknown error'}`,
           HttpStatus.BAD_REQUEST,
         );
       }

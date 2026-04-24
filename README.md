@@ -1,73 +1,95 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="200" alt="Nest Logo" /></a>
-</p>
+# Smart Report Extractor — Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS service that accepts a PDF upload and returns structured field extraction plus a plain-English summary. Supports invoices, bank statements, and generic documents.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Stack
 
-## Description
+- **Runtime**: Node.js + NestJS (Express under the hood)
+- **PDF parsing**: pdf-parse
+- **LLM**: Groq (`llama-3.1-8b-instant`) — free tier, used only for unrecognized document types
+- **Language**: TypeScript
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Installation
+## Setup
 
 ```bash
-$ npm install
+npm install
 ```
 
-## Running the app
+Create a `.env` file in this directory:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+GROQ_API_KEY=your_key_here
 ```
 
-## Test
+Get a free key at [console.groq.com](https://console.groq.com).
+
+## Running
 
 ```bash
-# unit tests
-$ npm run test
+# development (watch mode)
+npm run start:dev
 
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+# production
+npm run build
+npm run start:prod
 ```
 
-## Support
+Server starts on `http://localhost:3000`.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## API
 
-## Stay in touch
+### `POST /upload`
 
-- Author - [Kamil Myśliwiec](https://kamilmysliwiec.com)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+Upload a PDF file for extraction.
 
-## License
+**Request** — multipart/form-data, field name `file`, PDF only, max 10MB.
 
-Nest is [MIT licensed](LICENSE).
+```bash
+curl -X POST http://localhost:3000/upload -F "file=@invoice.pdf"
+```
+
+**Response — recognized document type**
+
+```json
+{
+  "success": true,
+  "type": "invoice",
+  "data": {
+    "type": "invoice",
+    "invoiceNumber": "INV-001",
+    "total": "1500.00",
+    "date": "2024-04-22"
+  },
+  "summary": "Invoice document. Invoice number: INV-001. Total amount: $1500.00. Date: 2024-04-22.",
+  "rawText": "First 500 chars of extracted text..."
+}
+```
+
+**Response — unrecognized document type**
+
+```json
+{
+  "success": true,
+  "type": "generic_document",
+  "message": "Document parsed but type not recognized. Returning full text.",
+  "fullText": "...",
+  "summary": "AI-generated summary from Groq..."
+}
+```
+
+**Supported document types**: `invoice`, `bank_statement`, `generic_document`
+
+## Supported Document Types
+
+| Type | Detected by | Fields extracted |
+|---|---|---|
+| Invoice | keyword `invoice` | invoiceNumber, total, date |
+| Bank statement | keywords `bank statement`, `balance`, etc. | accountNumber, balance, bankName |
+| Generic | fallback | fullText + LLM summary |
+
+## Tests
+
+```bash
+npm run test        # unit tests
+npm run test:e2e    # end-to-end tests
+```

@@ -1,280 +1,124 @@
-# PDF Document Extraction System - Architecture & Design
+# Smart Report Extractor — Design Document
 
 ## Overview
-This system intelligently extracts structured data from PDF documents using pattern matching (regex) and LLM-based summarization. It's designed to be scalable, maintainable, and extensible for multiple document types.
 
-## Architecture
+A NestJS service that accepts PDF uploads and returns structured field extraction plus a plain-English summary. It uses regex-based extraction for known document types and falls back to an LLM (Groq) only when the document type is unrecognized.
 
-### 1. Folder Structure
+## Folder Structure
+
 ```
 src/
 ├── modules/
 │   └── upload/
-│       ├── upload.controller.ts    # Handles file upload requests
-│       ├── upload.service.ts       # Core PDF processing logic
-│       └── upload.module.ts        # Module definition
+│       ├── upload.controller.ts    # POST /upload — file validation and routing
+│       ├── upload.service.ts       # Core processing: parse → classify → extract → summarize
+│       └── upload.module.ts
 ├── extractors/
-│   ├── extractor.interface.ts      # Interface for all extractors
-│   ├── invoice.extractor.ts        # Invoice-specific extraction
-│   └── bank.extractor.ts           # Bank statement extraction
+│   ├── extractor.interface.ts      # Extractor contract (canHandle + extract)
+│   ├── invoice.extractor.ts
+│   └── bank.extractor.ts
 ├── summary/
-│   ├── summary.service.ts          # LLM integration for summaries
-│   └── summary.module.ts           # Summary module
-├── common/
-│   └── utils/                      # Utility functions
-└── app.module.ts                   # Main app module
+│   ├── summary.service.ts          # Groq API integration (isolated HTTP service)
+│   └── summary.module.ts
+└── app.module.ts
 ```
 
-## Component Details
+## Request Flow
 
-### Upload Controller
-- **Route**: `POST /upload`
-- **Accepts**: PDF files via multipart form-data (field name: "file")
-- **Validation**:
-  - File must be provided
-  - File must be PDF (MIME type validation)
-- **Returns**: JSON with extraction results or error messages
+```
+POST /upload (multipart PDF)
+  → MIME + size validation (10MB limit)
+  → pdf-parse: buffer → raw text
+  → text empty? → return early with hint
+  → iterate extractors (Strategy pattern)
+      match found → regex extract → deterministic summary (no LLM)
+      no match    → LLM summary via Groq
+  → return JSON { success, type, data, summary }
+```
 
-### Upload Service
-**Responsibilities**:
-1. Parse PDF buffer using `pdf-parse` library
-2. Extract raw text from PDF
-3. Iterate through extractors to find matching handler
-4. Call extractor to parse document
-5. Generate LLM summary
-6. Return structured response
+## Extractor System (Strategy Pattern)
 
-**Error Handling**:
-- No file uploaded
-- No text extracted from PDF
-- No matching extractor (unsupported document)
-- PDF parsing failures
+Each extractor implements:
 
-### Extractor System
-
-#### Pattern: Strategy Design Pattern
-Each extractor implements the `Extractor` interface:
 ```typescript
 interface Extractor {
-  canHandle(text: string): boolean;    // Returns true if this extractor can process the text
-  extract(text: string): any;          // Extracts structured data from text
+  canHandle(text: string): boolean;
+  extract(text: string): any;
 }
 ```
 
-**Why Extractors?**
-- **Separation of Concerns**: Document-specific logic is isolated
-- **Easy to Add**: New document types require only a new extractor
-- **Testability**: Each extractor can be tested independently
-- **Scalability**: Easy to add queue-based processing for large files
+Adding a new document type = one new file + one line in `upload.service.ts`. No other changes needed.
 
-#### Invoice Extractor
-Extracts from invoices using regex patterns:
-- Invoice number
-- Total amount
-- Date
+**Current extractors:**
+- `InvoiceExtractor` — detects `"invoice"` keyword; extracts invoice number, total, date
+- `BankExtractor` — detects bank/statement keywords; extracts account number, balance, bank name
 
-#### Bank Extractor
-Extracts from bank statements:
-- Account number
-- Balance
-- Bank name
+## Cost Design
 
-### Summary Service
+The assignment constraint — *not every document should require the same processing overhead* — is addressed by tiering LLM usage:
 
-**How it works**:
-1. Takes extracted text (limited to 3000 chars to manage token costs)
-2. Sends to OpenAI API via axios
-3. Uses GPT-3.5-turbo to generate 2-3 line summary
-4. Returns summary or error message
+| Document type | Summary method | LLM call? |
+|---|---|---|
+| Invoice | Built from extracted fields | No |
+| Bank statement | Built from extracted fields | No |
+| Generic / unknown | Groq `llama-3.1-8b-instant` | Yes |
 
-**Configuration**:
-- Set `OPENAI_API_KEY` environment variable
-- Uses GPT-3.5-turbo model (cost-effective)
-- Max tokens: 150 for summary
+This means the common case (recognized document types) costs zero API calls. Groq is only invoked when regex extraction produces no match and there is no structured data to fall back on.
 
-**Fallback**:
-- If API key not set, returns informative message
-- Catches OpenAI API errors gracefully
+## Summary Service
 
-## Regex vs LLM Approach
+Isolated as its own NestJS module — the LLM is treated as an external HTTP service, not embedded in business logic. It:
+- Calls `https://api.groq.com/openai/v1/chat/completions`
+- Uses `llama-3.1-8b-instant` (free tier)
+- Truncates input to 3000 chars to control token cost
+- Returns a graceful message if `GROQ_API_KEY` is not set
 
-### Why Both?
-1. **Regex (Pattern Matching)**:
-   - ✅ Fast and predictable
-   - ✅ No API costs
-   - ✅ Works offline
-   - ❌ Limited to known patterns
-   - ❌ Brittle with format variations
+## Production Constraint Responses
 
-2. **LLM (AI Summary)**:
-   - ✅ Flexible, understands context
-   - ✅ Handles variations
-   - ✅ Generates human-readable summaries
-   - ❌ Requires API key & costs money
-   - ❌ Network dependent
-   - ❌ May need fine-tuning
+**Volume** — The synchronous pipeline is fast for regex-matched docs (~150ms). For scale, the natural next step is a job queue (Bull/BullMQ) so uploads return a job ID immediately and results are fetched async.
 
-**Solution**: Use regex for structured extraction (invoices, statements) + LLM for general summary
+**Accuracy** — Regex patterns handle clean, digital PDFs well. Scanned/image PDFs are detected (empty text) and rejected with a clear message. For higher accuracy on structured types, the extractors can be upgraded to LLM-assisted extraction selectively.
 
-## Response Format
+**Cost** — LLM only called for unrecognized documents. Recognized types use deterministic summarization at zero API cost.
 
-### Success Response
-```json
-{
-  "success": true,
-  "type": "invoice",
-  "data": {
-    "type": "invoice",
-    "invoiceNumber": "INV-001",
-    "total": "1500.00",
-    "date": "2024-04-22"
-  },
-  "summary": "Invoice INV-001 for $1500 issued on April 22, 2024. Contains charges for professional services rendered in April.",
-  "rawText": "First 500 characters of extracted PDF text..."
-}
-```
+**Reliability** — Missing API key degrades gracefully (returns message, not 500). PDF parse failures and malformed uploads return typed HTTP errors. File size capped at 10MB to prevent memory exhaustion.
 
-### Error Response (No Extractor Match)
-```json
-{
-  "success": false,
-  "message": "Unsupported document type",
-  "rawText": "First 500 characters of extracted PDF text..."
-}
-```
+## Adding a New Document Type
 
-## Scaling Considerations
-
-### For Large Volume
-1. **Job Queue**: Use Bull/RabbitMQ for async processing
-   ```typescript
-   // Example: Add to queue instead of processing directly
-   await this.uploadQueue.add({ fileId, buffer });
-   ```
-
-2. **Caching**: Cache summaries for identical documents
-   ```typescript
-   // Redis cache with hash of file content as key
-   ```
-
-3. **Batch Processing**: Group multiple PDFs
-   - Process multiple files in parallel
-   - Limit concurrent OpenAI API calls
-
-4. **Database**: Store results
-   ```typescript
-   // Save extraction results with timestamps
-   await this.uploadRepository.save(result);
-   ```
-
-### Example Scaling Flow
-```
-Upload API → Validation → Queue → Worker → DB
-                ↓
-              Error Handler
-```
-
-## Adding New Document Types
-
-### Step 1: Create New Extractor
 ```typescript
-import { Extractor } from './extractor.interface';
-
+// 1. Create src/extractors/contract.extractor.ts
 export class ContractExtractor implements Extractor {
   canHandle(text: string): boolean {
     return text.toLowerCase().includes('contract');
   }
-
   extract(text: string) {
-    // Your extraction logic
-    return { type: 'contract', /* extracted fields */ };
+    return { type: 'contract', /* regex fields */ };
   }
 }
-```
 
-### Step 2: Register in Upload Service
-```typescript
+// 2. Register in upload.service.ts
 private extractors = [
   new InvoiceExtractor(),
   new BankExtractor(),
-  new ContractExtractor(),  // Add here
+  new ContractExtractor(), // add here
 ];
 ```
+
+## Stack Notes
+
+The assignment specifies MERN (Node.js + Express). NestJS is used here because it runs on Express under the hood and provides a structured module system that makes the extractor/service/controller separation cleaner to reason about and easier to test. React + Vite is used on the frontend. No MongoDB is used — documents are processed statelessly, with no persistence required by the current spec.
 
 ## Environment Variables
 
 ```bash
-# Required for LLM summary feature
-OPENAI_API_KEY=sk-...
-
-# Optional: Future configurations
-# PDF_MAX_SIZE=10mb
-# CACHE_TTL=3600
+GROQ_API_KEY=your_key_here   # From console.groq.com — free tier
 ```
 
-## Testing Strategy
+## Performance Profile
 
-### Unit Tests
-- Test each extractor independently
-- Test regex patterns with various formats
-- Test error cases
-
-### Integration Tests
-- Upload real PDF files
-- Verify extraction accuracy
-- Test with unsupported documents
-
-### Example Test
-```typescript
-describe('InvoiceExtractor', () => {
-  it('should extract invoice number', () => {
-    const extractor = new InvoiceExtractor();
-    const text = 'Invoice #INV-12345';
-    const result = extractor.extract(text);
-    expect(result.invoiceNumber).toBe('INV-12345');
-  });
-});
-```
-
-## API Usage Examples
-
-### Upload and Extract
-```bash
-curl -X POST http://localhost:3000/upload \
-  -F "file=@invoice.pdf"
-```
-
-### Response
-```json
-{
-  "success": true,
-  "type": "invoice",
-  "data": { ... },
-  "summary": "..."
-}
-```
-
-## Dependencies
-
-- `@nestjs/common` - NestJS core
-- `@nestjs/platform-express` - Express integration for file upload
-- `pdf-parse` - PDF text extraction
-- `axios` - HTTP client for OpenAI API
-- `multer` - File upload middleware
-
-## Performance Notes
-
-- PDF parsing: ~100-500ms per file (depends on size)
-- LLM API call: ~1-3 seconds (network dependent)
-- Regex extraction: ~10-50ms
-- **Total per file**: ~1.5-3.5 seconds
-
-## Future Enhancements
-
-1. **Advanced Extractors**: Receipt, Pay stub, Medical records
-2. **OCR Support**: Image-based PDFs
-3. **Custom Fields**: User-defined extraction patterns
-4. **Batch Upload**: Process multiple files simultaneously
-5. **Web Dashboard**: View extraction history
-6. **Alternative LLMs**: Claude, LLaMA, local models
-7. **Webhook Notifications**: Alert when processing complete
+| Step | Typical time |
+|---|---|
+| PDF parse | 100–500ms |
+| Regex extraction | <5ms |
+| Deterministic summary | <1ms |
+| Groq API call (generic docs only) | 500–2000ms |
