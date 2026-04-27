@@ -4,9 +4,11 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  console.log(`FRONTEND_URL=${process.env.FRONTEND_URL}`);
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: [
+      'https://smart-report-extractor-frontend.vercel.app',
+      'http://localhost:5173',
+    ],
   });
   const port = parseInt(process.env.PORT || '3000', 10);
   await app.listen(port, '0.0.0.0');
