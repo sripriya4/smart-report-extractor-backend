@@ -18,7 +18,7 @@ export class UploadController {
   constructor(private readonly uploadService: UploadService) {}
 
   @Post()
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 50 * 1024 * 1024 } }))
   async uploadFile(@UploadedFile() file: UploadedFile | undefined) {
     if (!file) {
       throw new BadRequestException('No file uploaded');

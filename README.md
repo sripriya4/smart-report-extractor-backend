@@ -83,8 +83,7 @@ curl -X POST http://localhost:3000/upload -F "file=@invoice.pdf"
 
 | Type | Detected by | Fields extracted |
 |---|---|---|
-| Invoice | keyword `invoice` | invoiceNumber, total, date |
-| Bank statement | keywords `bank statement`, `balance`, etc. | accountNumber, balance, bankName |
+| Invoice | keyword `invoice` | invoiceNumber, total, date, seller |
 | Generic | fallback | fullText + LLM summary |
 
 ## Tests

@@ -1,7 +1,6 @@
 import { Injectable, InternalServerErrorException, BadRequestException } from '@nestjs/common';
 import * as pdfParse from 'pdf-parse';
 import { InvoiceExtractor } from '../../extractors/invoice.extractor';
-import { BankExtractor } from '../../extractors/bank.extractor';
 import { SummaryService } from '../../summary/summary.service';
 
 interface UploadedFile {
@@ -13,7 +12,6 @@ interface UploadedFile {
 export class UploadService {
   private extractors = [
     new InvoiceExtractor(),
-    new BankExtractor(),
   ];
 
   constructor(private readonly summaryService: SummaryService) {}
