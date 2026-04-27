@@ -49,13 +49,12 @@ export class UploadService {
         }
       }
 
-      // No extractor matched — use LLM only for unrecognized documents
-      const summary = await this.summaryService.summarize(text);
+      // No extractor matched — use LLM for structured extraction
+      const { fields, summary } = await this.summaryService.extractStructured(text);
       return {
         success: true,
         type: 'generic_document',
-        message: 'Document parsed but type not recognized. Returning full text.',
-        fullText: text,
+        data: fields,
         summary,
       };
     } catch (error) {
@@ -78,13 +77,6 @@ export class UploadService {
       if (data.total) parts.push(`Total: ${data.total}.`);
       if (data.date) parts.push(`Date: ${data.date}.`);
       if (data.orderNumber) parts.push(`Order: ${data.orderNumber}.`);
-      return parts.join(' ');
-    }
-    if (data.type === 'bank_statement') {
-      const parts = ['Bank statement.'];
-      if (data.bankName) parts.push(`Bank: ${data.bankName}.`);
-      if (data.accountNumber) parts.push(`Account: ${data.accountNumber}.`);
-      if (data.balance) parts.push(`Balance: $${data.balance}.`);
       return parts.join(' ');
     }
     return 'Structured document processed successfully.';

@@ -1,19 +1,24 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import axios from 'axios';
+
+export interface StructuredExtraction {
+  fields: Record<string, string | null>;
+  summary: string;
+}
 
 @Injectable()
 export class SummaryService {
   private readonly groqApiKey = process.env.GROQ_API_KEY;
   private readonly groqBaseUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
-  async summarize(text: string): Promise<string> {
+  async extractStructured(text: string): Promise<StructuredExtraction> {
+    const fallback: StructuredExtraction = { fields: {}, summary: 'Could not generate summary.' };
+
+    if (!this.groqApiKey) {
+      return { fields: {}, summary: 'Summary service not configured (GROQ_API_KEY not set).' };
+    }
+
     try {
-      if (!this.groqApiKey) {
-        return 'Summary service not configured (GROQ_API_KEY not set)';
-      }
-
-      const truncatedText = text.substring(0, 3000);
-
       const response = await axios.post(
         this.groqBaseUrl,
         {
@@ -22,15 +27,18 @@ export class SummaryService {
             {
               role: 'system',
               content:
-                'You are a document summarization assistant. Provide a concise 2-3 line summary of the document text provided.',
+                'You are a document analysis assistant. Given document text, return ONLY a valid JSON object with two keys: ' +
+                '"fields": an object of 3-8 key-value string pairs for the most important structured data found ' +
+                '(dates, names, IDs, amounts, parties, reference numbers — use null for missing values), and ' +
+                '"summary": a 2-3 sentence plain-English summary. No markdown, no code blocks, no explanation.',
             },
             {
               role: 'user',
-              content: `Please summarize this document:\n\n${truncatedText}`,
+              content: `Analyze this document:\n\n${text.substring(0, 3000)}`,
             },
           ],
-          max_tokens: 150,
-          temperature: 0.5,
+          max_tokens: 400,
+          temperature: 0.2,
         },
         {
           headers: {
@@ -40,20 +48,16 @@ export class SummaryService {
         },
       );
 
-      return response.data.choices[0].message.content || 'No summary generated';
-    } catch (error) {
-      if (error instanceof Object && 'response' in error) {
-        const err = error as any;
-        throw new HttpException(
-          `Groq API Error: ${err.response?.data?.error?.message || 'Unknown error'}`,
-          HttpStatus.BAD_REQUEST,
-        );
-      }
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new HttpException(
-        `Failed to generate summary: ${errorMessage}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      const raw: string = response.data.choices[0].message.content || '';
+      const jsonStr = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+      const parsed = JSON.parse(jsonStr);
+
+      return {
+        fields: parsed.fields && typeof parsed.fields === 'object' ? parsed.fields : {},
+        summary: typeof parsed.summary === 'string' ? parsed.summary : 'No summary generated.',
+      };
+    } catch {
+      return fallback;
     }
   }
 }

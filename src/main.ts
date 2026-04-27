@@ -14,8 +14,7 @@ async function bootstrap() {
 
   const port = parseInt(process.env.PORT || '3000', 10);
 
-  console.log('🚀 PORT:', port);
-  console.log('🔑 GROQ KEY:', process.env.GROQ_API_KEY ? 'FOUND' : 'MISSING');
+
 
   await app.listen(port, '0.0.0.0');
 }
