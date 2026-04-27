@@ -15,8 +15,7 @@ src/
 │       └── upload.module.ts
 ├── extractors/
 │   ├── extractor.interface.ts      # Extractor contract (canHandle + extract)
-│   ├── invoice.extractor.ts
-│   └── bank.extractor.ts
+│   └── invoice.extractor.ts
 ├── summary/
 │   ├── summary.service.ts          # Groq API integration (isolated HTTP service)
 │   └── summary.module.ts
@@ -50,8 +49,7 @@ interface Extractor {
 Adding a new document type = one new file + one line in `upload.service.ts`. No other changes needed.
 
 **Current extractors:**
-- `InvoiceExtractor` — detects `"invoice"` keyword; extracts invoice number, total, date
-- `BankExtractor` — detects bank/statement keywords; extracts account number, balance, bank name
+- `InvoiceExtractor` — detects `"invoice"` keyword; extracts invoice number, total, date, seller, order number
 
 ## Cost Design
 
@@ -60,7 +58,6 @@ The assignment constraint — *not every document should require the same proces
 | Document type | Summary method | LLM call? |
 |---|---|---|
 | Invoice | Built from extracted fields | No |
-| Bank statement | Built from extracted fields | No |
 | Generic / unknown | Groq `llama-3.1-8b-instant` | Yes |
 
 This means the common case (recognized document types) costs zero API calls. Groq is only invoked when regex extraction produces no match and there is no structured data to fall back on.
@@ -99,7 +96,6 @@ export class ContractExtractor implements Extractor {
 // 2. Register in upload.service.ts
 private extractors = [
   new InvoiceExtractor(),
-  new BankExtractor(),
   new ContractExtractor(), // add here
 ];
 ```
